@@ -6,20 +6,20 @@
  */
 
 #include <iostream>
-#include <fstream>
 
 #include "DecPOMDPDiscrete.h"
 #include "Timing.h"
-#include "SimulationDecPOMDPDiscrete.h"
 #include "NullPlanner.h"
 #include "directories.h"
 
 #include "MDPValueIteration.h"
-#include "QTable.h"
-#include "AgentMDP.h"
 
 #include "argumentHandlers.h"
 #include "argumentUtils.h"
+
+#include "PolicyVector.hpp"
+#include "FileUtility.hpp"
+#include "PrismFileWriting.hpp"
 
 using namespace ArgumentUtils;
 
@@ -39,37 +39,65 @@ const struct argp_child childVector[] = { ArgumentHandlers::problemFile_child,
 		ArgumentHandlers::simulation_child, { 0 } };
 #include "argumentHandlersPostChild.h"
 
-/**
- * Runs the simulation of the MDP.
- */
-void runSimulation(const QTable & q, const PlanningUnitDecPOMDPDiscrete *np,
-		const SimulationDecPOMDPDiscrete &sim) {
-	AgentMDP agent(np, 0, q);
-	AgentFullyObservable *newAgent;
-	std::vector<AgentFullyObservable*> agents;
+static std::string prismFileName;
+static std::string timingsFileName;
 
-	for (Index i = 0; i < np->GetNrAgents(); i++) {
-		newAgent = new AgentMDP(agent);
-		newAgent->SetIndex(i);
-		agents.push_back(newAgent);
+static DecPOMDPDiscreteInterface* instantiateProblem(ArgumentHandlers::Arguments& args) {
+	std::cout << "Instantiating the problem..." << std::endl;
+	DecPOMDPDiscreteInterface* mdp = GetDecPOMDPDiscreteInterfaceFromArgs(args);
+	std::cout << "...done." << std::endl;
+	return mdp;
+}
+
+static void setupOutputFiles(ArgumentHandlers::Arguments& args) {
+	// Set up output files
+	prismFileName = "/dev/null"; timingsFileName = "/dev/null";
+	if (!args.dryrun) {
+		std::stringstream ss;
+		ss << remove_extension(args.dpf) << "_d" << fractional_part_as_int(args.discount, 2) << "_h" << args.horizon << ".nm";
+		prismFileName = ss.str();
+		timingsFileName = remove_extension(prismFileName) + "_Timings";
+		if (!file_exists(prismFileName)) {
+			std::cout << "VI: could not open " << prismFileName << std::endl;
+			std::cout << "Results will not be stored to disk." << std::endl;
+			args.dryrun = true;
+		}
 	}
-	SimulationResult result = sim.RunSimulations(agents);
-	result.PrintSummary();
+}
 
-	for (Index i = 0; i < np->GetNrAgents(); i++)
-		delete agents[i];
+PolicyVector getOptimalPolicy(DecPOMDPDiscreteInterface* mdp, MDPValueIteration& vi) {
+	std::cout << "Optimal policy:" << std::endl;
+	std::vector<Index> vector;
+	for (int state_no = 0; state_no < mdp->GetNrStates(); state_no++) {
+		Index maximizingActionIndex = vi.GetMaximizingAction(0, state_no);
+		std::cout << "State no.: " << state_no << " Maximizing action: " << maximizingActionIndex << std::endl;
+		vector.push_back(maximizingActionIndex);
+	}
+	PolicyVector p(vector);
+	return p;
 }
 
 /**
- * Checks if the file with the passed name exists.
- *
- * @param fileName : name of the file
- *
- * @return bool indicating whether the file exists
+ * Applies value iteration for the MDP problem.
  */
-bool file_exists(const std::string& fileName) {
-	std::ofstream file(fileName.c_str());
-	return file.good();
+static PolicyVector applyValueIteration(ArgumentHandlers::Arguments& args, DecPOMDPDiscreteInterface* mdp) {
+	// Apply Value Iteration
+	PlanningUnitDecPOMDPDiscrete *np = new NullPlanner(args.horizon, mdp);
+	MDPValueIteration vi(*np);
+	std::cout << "Running value iteration..." << std::endl;
+	Timing time;
+	time.Start("Plan");
+	vi.Plan();
+	time.Stop("Plan");
+	std::cout << "...done." << std::endl;
+
+	// Write VI timing information to file
+	if (!args.dryrun)
+		time.Save(timingsFileName);
+
+	PolicyVector policy = getOptimalPolicy(mdp, vi);
+	delete np;
+	return policy;
 }
 
 int main(int argc, char **argv) {
@@ -77,54 +105,12 @@ int main(int argc, char **argv) {
 	argp_parse(&ArgumentHandlers::theArgpStruc, argc, argv, 0, 0, &args);
 
 	try {
-		Timing Time;
-		std::cout << "Instantiating the problem..." << std::endl;
-		DecPOMDPDiscreteInterface* decpomdp =
-				GetDecPOMDPDiscreteInterfaceFromArgs(args);
-		std::cout << "...done." << std::endl;
+		// Instantiate the problem, set-up output files and retrieve the optimal policy
+		DecPOMDPDiscreteInterface* mdp = instantiateProblem(args);
+		setupOutputFiles(args);
+		PolicyVector optimalPolicy = applyValueIteration(args, mdp);
+		writePrismFile(prismFileName, mdp, optimalPolicy);
 
-		// Set up output files
-		std::string resultsFileName = "/dev/null", timingsFilename = "/dev/null";
-		if (!args.dryrun) {
-			std::stringstream ss;
-			args.dpf;
-			ss << args.dpf << "_results" << "_h" << args.horizon;
-			resultsFileName = ss.str();
-			timingsFilename = resultsFileName + "_Timings";
-			if (!file_exists(resultsFileName)) {
-				std::cout << "VI: could not open " << resultsFileName << std::endl;
-				std::cout << "Results will not be stored to disk." << std::endl;
-				args.dryrun = true;
-			}
-		}
-
-		//start VI
-		PlanningUnitDecPOMDPDiscrete *np = new NullPlanner(args.horizon,
-				decpomdp);
-		MDPValueIteration vi(*np);
-		std::cout << "Running value iteration..." << std::endl;
-		Time.Start("Plan");
-		vi.Plan();
-		Time.Stop("Plan");
-		std::cout << "...done." << std::endl;
-		QTable q = vi.GetQTable(0); //<- infinite horizon, so get 1 value function of stage 0
-
-		int nrRuns = args.nrRuns; //defaults to 1000, see argumentHandlers.h
-		int seed = args.randomSeed; //defaults to 42
-		std::cout << "Simulating policy with nrRuns: " << nrRuns
-				<< " and seed: " << seed << std::endl;
-		SimulationDecPOMDPDiscrete sim(*np, nrRuns, seed);
-
-		// Write intermediate simulation results to file
-		if (!args.dryrun)
-			sim.SaveIntermediateResults(resultsFileName);
-
-		std::vector<double> avgRewards;
-		runSimulation(q, np, sim);
-
-		// Write VI timing information to file
-		if (!args.dryrun)
-			Time.Save(timingsFilename);
 	} catch (E& e) {
 		e.Print();
 	}
