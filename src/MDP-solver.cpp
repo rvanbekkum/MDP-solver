@@ -42,6 +42,13 @@ const struct argp_child childVector[] = { ArgumentHandlers::problemFile_child,
 static std::string prismFileName;
 static std::string timingsFileName;
 
+/**
+ * Instantiates a problem based on the passed arguments.
+ *
+ * @param args : Arguments
+ *
+ * @return DecPOMDPDiscreteInterface
+ */
 static DecPOMDPDiscreteInterface* instantiateProblem(ArgumentHandlers::Arguments& args) {
 	std::cout << "Instantiating the problem..." << std::endl;
 	DecPOMDPDiscreteInterface* mdp = GetDecPOMDPDiscreteInterfaceFromArgs(args);
@@ -49,13 +56,15 @@ static DecPOMDPDiscreteInterface* instantiateProblem(ArgumentHandlers::Arguments
 	return mdp;
 }
 
+/**
+ * Sets up the output files of the MDP-solver program.
+ *
+ * @param args : Arguments
+ */
 static void setupOutputFiles(ArgumentHandlers::Arguments& args) {
-	// Set up output files
 	prismFileName = "/dev/null"; timingsFileName = "/dev/null";
 	if (!args.dryrun) {
-		std::stringstream ss;
-		ss << remove_extension(args.dpf) << "_d" << fractional_part_as_int(args.discount, 2) << "_h" << args.horizon << ".nm";
-		prismFileName = ss.str();
+		prismFileName = getPrismFilePath(args.dpf, args.discount, args.horizon);
 		timingsFileName = remove_extension(prismFileName) + "_Timings";
 		if (!file_exists(prismFileName)) {
 			std::cout << "VI: could not open " << prismFileName << std::endl;
@@ -65,6 +74,14 @@ static void setupOutputFiles(ArgumentHandlers::Arguments& args) {
 	}
 }
 
+/**
+ * Retrieves the optimal policy for an mdp from the value iteration applied on this mdp.
+ *
+ * @param mdp : The Markov Decision process
+ * @param vi : The value iteration applied on the MDP model
+ *
+ * @return PolicyVector corresponding to the optimal policy
+ */
 PolicyVector getOptimalPolicy(DecPOMDPDiscreteInterface* mdp, MDPValueIteration& vi) {
 	std::cout << "Optimal policy:" << std::endl;
 	std::vector<Index> vector;
@@ -79,6 +96,10 @@ PolicyVector getOptimalPolicy(DecPOMDPDiscreteInterface* mdp, MDPValueIteration&
 
 /**
  * Applies value iteration for the MDP problem.
+ *
+ * @param args : Arguments
+ *
+ * @return PolicyVector corresponding to the optimal policy
  */
 static PolicyVector applyValueIteration(ArgumentHandlers::Arguments& args, DecPOMDPDiscreteInterface* mdp) {
 	// Apply Value Iteration
@@ -100,6 +121,9 @@ static PolicyVector applyValueIteration(ArgumentHandlers::Arguments& args, DecPO
 	return policy;
 }
 
+/**
+ * Executes the program.
+ */
 int main(int argc, char **argv) {
 	ArgumentHandlers::Arguments args;
 	argp_parse(&ArgumentHandlers::theArgpStruc, argc, argv, 0, 0, &args);
@@ -108,6 +132,7 @@ int main(int argc, char **argv) {
 		// Instantiate the problem, set-up output files and retrieve the optimal policy
 		DecPOMDPDiscreteInterface* mdp = instantiateProblem(args);
 		setupOutputFiles(args);
+
 		PolicyVector optimalPolicy = applyValueIteration(args, mdp);
 		writePrismFile(prismFileName, mdp, optimalPolicy);
 

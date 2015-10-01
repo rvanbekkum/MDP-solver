@@ -36,10 +36,25 @@ std::string remove_extension(const std::string fullFileName) {
 	return rawFileName;
 }
 
+/**
+ * Retrieve only the name instead of the full path from the string passed.
+ *
+ * @param path : the full path to the file
+ *
+ * @return The name of the file
+ */
 std::string trimFilePathToName(const std::string path) {
 	return path.substr(path.find_last_of("\\/") + 1, path.length() - 1);
 }
 
+/**
+ * Retrieves the decimal part of the floating-point with precision as specified.
+ *
+ * @param number : the double for which to retrieve the decimal part
+ * @param number_of_decimal_places : specifies precision, so number of digits of the returned integer
+ *
+ * @return the fractional part of the passed double floating point
+ */
 int fractional_part_as_int(double number, int number_of_decimal_places) {
     double dummy;
     double frac = modf(number,&dummy);
